@@ -75,20 +75,23 @@ const sk_colors = ["alice_blue", "antique_white", "aqua", "aquamarine", "azure",
 // ------------------------------------------------------------------------------
 // Get a list of all the files in a directory and it's subdirectories
 // ------------------------------------------------------------------------------
-function getAllFiles(dir, allFilesList = []) {
+function getAllFiles(dir, baseDir = dir, allFilesList = []) {
   try {
     const files = fs.readdirSync(dir);
-    files.map(file => {
-      const name = dir + '/' + file;
-      if (fs.statSync(name).isDirectory()) { // check if subdirectory is present
-        getAllFiles(name, allFilesList);     // do recursive execution for subdirectory
+
+    files.forEach((file) => {
+      const fullPath = path.join(dir, file);
+
+      if (fs.statSync(fullPath).isDirectory()) {
+        getAllFiles(fullPath, baseDir, allFilesList);
       } else {
-        allFilesList.push(file);             // push filename into the array
+        allFilesList.push(path.relative(baseDir, fullPath).replaceAll("\\", "/"));
       }
-    })
+    });
   } catch (err) {
     console.error(kleur.yellow(`Warning: Unable to access directory ${dir}`), err);
   }
+
   return allFilesList;
 }
 
@@ -101,7 +104,7 @@ function getAllFinishedExamples() {
     var apiData = fs.readFileSync(`${__dirname}/json-files/api.json`);
     apiJsonData = JSON.parse(apiData);
   } catch (error) {
-    console.error(kluer.red("Error occurred when trying to parse API Json data: ", error));
+    console.error(kleur.red("Error occurred when trying to parse API Json data: ", error));
   }
 
   const categories = []
@@ -144,7 +147,7 @@ function Mappings(jsonData) {
         .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
         .join(" ");
 
-      typeMappings[typedef.name] = `[\`${name}\`](/api/${categoryKey.toLowerCase().replace(/\s+/g, "-")}/#${name.toLowerCase().replace(/\s+/g, "-")})`;
+      typeMappings[typedef.name] = `[\`${name}\`](/api/${categoryKey.toLowerCase().replace(/_/g, "-").replace(/\s+/g, "-")}/#${name.toLowerCase().replace(/\s+/g, "-")})`;
     });
     category.structs.forEach((struct) => {
       // Add structs to typeMappings
@@ -152,7 +155,7 @@ function Mappings(jsonData) {
         .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
         .join(" ");
 
-      typeMappings[struct.name] = `[\`${name}\`](/api/${categoryKey.toLowerCase().replace(/\s+/g, "-")}/#${name.toLowerCase().replace(/\s+/g, "-")})`;
+      typeMappings[struct.name] = `[\`${name}\`](/api/${categoryKey.toLowerCase().replace(/\s+/g, "-").replace(/_/g, "-")}/#${name.toLowerCase().replace(/\s+/g, "-")})`;
     });
     category.enums.forEach((enumm) => {
       // Add structs to typeMappings
@@ -160,7 +163,7 @@ function Mappings(jsonData) {
         .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
         .join(" ");
 
-      typeMappings[enumm.name] = `[\`${name}\`](/api/${categoryKey.toLowerCase().replace(/\s+/g, "-")}/#${name.toLowerCase().replace(/\s+/g, "-")})`;
+      typeMappings[enumm.name] = `[\`${name}\`](/api/${categoryKey.toLowerCase().replace(/\s+/g, "-").replace(/_/g, "-")}/#${name.toLowerCase().replace(/\s+/g, "-")})`;
     });
   }
 }
@@ -173,9 +176,9 @@ function extractEnumValues(signature, language) {
   let regex;
 
   if (language === 'cpp') {
-    regex = /(\w+)\s*=\s*\d+/g; // Handles the cpp pattern which has no dot in the name
+    regex = /(\w+)\s*=\s*/g; // Handles the cpp pattern which has no dot in the name
   } else {
-    regex = /(\w+\.\w+)\s*=\s*\d+/g; // Handles the other languages which have a dot in the name
+    regex = /(\w+\.\w+)\s*=\s*/g; // Handles the other languages which have a dot in the name
   }
 
   let match;
@@ -247,19 +250,19 @@ function getUsageExampleImports(categoryKey, functionKey) {
   let categoryPath = '/usage-examples/' + categoryKey;
   let categoryFilePath = './public/usage-examples/' + categoryKey;
 
-  const functionFiles = getAllFiles(categoryFilePath).filter(file => file.startsWith(functionKey));
+  const functionFiles = getAllFiles(categoryFilePath).filter(file => path.basename(file).startsWith(functionKey));
   if (functionFiles.length > 0) {
     const txtFiles = functionFiles.filter(file => file.endsWith('.txt'))
     if (txtFiles.length > 0) {
       txtFiles.forEach((exampleTxtKey) => {
-        let exampleKey = exampleTxtKey.replaceAll(".txt", "");
+        let exampleKey = path.basename(exampleTxtKey).replaceAll(".txt", "");
 
         let importTitle = exampleKey.replaceAll("-", "_");
 
         languageOrder.forEach((lang) => {
           const languageFiles = functionFiles.filter(file => file.endsWith(languageFileExtensions[lang]));
-          let codeFilePath = categoryPath + "/" + exampleTxtKey.replaceAll(".txt", languageFileExtensions[lang]);
 
+          let codeFilePath = categoryPath + "/" + exampleTxtKey.replaceAll(".txt", languageFileExtensions[lang]);
           // import code if available
           if (languageFiles.length > 0) {
             languageCodeAvailable[lang] = true;
@@ -304,6 +307,23 @@ function getUsageExampleImports(categoryKey, functionKey) {
 }
 
 // ------------------------------------------------------------------------------
+// Get group name (C++ function name) from unique global name
+// ------------------------------------------------------------------------------
+function getGroupName(jsonData, uniqueName) {
+  var funcGroupName = ""
+  for (const categoryKey in jsonData) {
+    const category = jsonData[categoryKey];
+    const categoryFunctions = category.functions;
+    categoryFunctions.forEach((func) => {
+      if (func.unique_global_name == uniqueName) {
+        funcGroupName = func.name.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");;
+      }
+    });
+  }
+  return funcGroupName;
+}
+
+// ------------------------------------------------------------------------------
 // Get mdx string for Usage example content (with code tabs etc)
 // ------------------------------------------------------------------------------
 function getUsageExampleContent(jsonData, categoryKey, groupName, functionKey) {
@@ -318,7 +338,7 @@ function getUsageExampleContent(jsonData, categoryKey, groupName, functionKey) {
   let categoryFilePath = './public/usage-examples/' + categoryKey;
 
   let exampleKey = functionKey.replaceAll(".txt", "");
-  const functionFiles = getAllFiles(categoryFilePath).filter(file => file.startsWith(exampleKey));
+  const functionFiles = getAllFiles(categoryFilePath).filter(file => path.basename(file).startsWith(exampleKey));
 
   if (functionFiles.length > 0) {
 
@@ -327,10 +347,10 @@ function getUsageExampleContent(jsonData, categoryKey, groupName, functionKey) {
 
       // import code if available
       if (functionFiles.length > 0) {
-        let importTitle = exampleKey.replaceAll("-", "_");
+        let importTitle = path.basename(exampleTxtKey).replaceAll(".txt", "").replaceAll("-", "_");
 
         // Description
-        let exampleNum = exampleKey.replace(/\D/g, '');
+        let exampleNum = path.basename(exampleTxtKey).replace(/\D/g, '');
         mdxData += `**Example ${exampleNum}**: `;
         let exampleTxt = fs.readFileSync(categoryFilePath + "/" + exampleTxtKey);
         mdxData += exampleTxt.toString();
@@ -351,7 +371,7 @@ function getUsageExampleContent(jsonData, categoryKey, groupName, functionKey) {
               // Check if both top level and oop code has been found for current function
               const csharpFiles = functionFiles.filter(file => file.endsWith("-top-level.cs") || file.endsWith("-oop.cs")).filter(file => file.includes(exampleKey));
               const cppFiles = functionFiles.filter(file => file.endsWith("-sk.cpp") || file.endsWith("-beyond.cpp")).filter(file => file.includes(exampleKey));
-              functionTag = exampleKey.split("-")[0];
+              functionTag = path.basename(exampleTxtKey).split("-")[0];
               if (lang == "cpp") {
                 functionTag = groupName;
               }
@@ -379,26 +399,9 @@ function getUsageExampleContent(jsonData, categoryKey, groupName, functionKey) {
                 });
                 mdxData += "  </Tabs>\n\n";
                 mdxData += "  </TabItem>\n";
-              } 
+              }
               // Check for cpp files and generate nested tabs
               else if (lang == "cpp" && cppFiles.length > 0) {
-                mdxData += "\n  <Tabs syncKey=\"cpp-style\">\n";
-                cppFiles.slice().reverse().forEach(file => {
-                  if (file.includes(exampleKey)) {
-                    if (file.includes("-sk")) {
-                      mdxData += `    <TabItem label="SplashKit">\n`;
-                      mdxData += `      <Code code={${importTitle}_sk_${lang}} lang="${lang}" mark={"${functionTag}"} />\n`;
-                      mdxData += "    </TabItem>\n";
-                    }
-                    if (file.includes("-beyond")) {
-                      mdxData += `    <TabItem label="Beyond SplashKit">\n`;
-                      mdxData += `      See the [Graphics](https://splashkit.io/beyond-splashkit/graphics/0-getting-started-with-graphics/#getting-started-without-splashkit) or [Audio](https://splashkit.io/beyond-splashkit/audio/0-sound-effects/#getting-started-without-splashkit) Beyond SplashKit guides for help compiling without SplashKit.\n`;
-                      mdxData += `      <Code code={${importTitle}_beyond_${lang}} lang="${lang}" mark={"SplashKit.${functionTag}"} />\n`;
-                      mdxData += "    </TabItem>\n";
-                    }
-                  }
-                });
-                mdxData += "  </Tabs>\n\n";
                 mdxData += "  </TabItem>\n";
               }
               else {
@@ -417,14 +420,14 @@ function getUsageExampleContent(jsonData, categoryKey, groupName, functionKey) {
       let outputFilePath = categoryPath + "/" + exampleTxtKey;
 
 
-      const imageFiles = functionFiles.filter(file => file.endsWith(exampleKey + '.png'));
+      const imageFiles = functionFiles.filter(file => path.basename(file) === path.basename(exampleTxtKey).replaceAll(".txt", ".png"));
       // Check for .png files
       if (imageFiles.length > 0) {
         outputFilePath = outputFilePath.replaceAll(".txt", ".png");
         mdxData += `![${exampleKey} example](${outputFilePath})\n`
       }
       else {
-        const gifFiles = functionFiles.filter(file => file.endsWith('.gif')).filter(file => file.startsWith(exampleKey));
+        const gifFiles = functionFiles.filter(file => file.endsWith('.gif')).filter(file => path.basename(file).startsWith(path.basename(exampleTxtKey).replaceAll(".txt", "")));
         // Check for .gif files
         if (gifFiles.length > 0) {
           outputFilePath = outputFilePath.replaceAll(".txt", ".gif");
@@ -481,21 +484,26 @@ let success = true;
 const jsonData = getJsonData("api.json");
 const jsonColors = getJsonData("colors.json");
 let guidesJson = getJsonData("guides.json");
+let usageExamplesJson = getJsonData("usage-example-references.json");
 let guidesCategories = getApiCategories(guidesJson);
+let examplesCategories = getApiCategories(usageExamplesJson);
 const usageExamples = getAllFinishedExamples();
 
 Mappings(jsonData);
 console.log(`\nGenerating MDX files for API Documentation pages...\n`);
 
-// Please select an option: "animations, audio, camera, color, geometry, graphics, input, json, networking, physics, resource_bundles, resources, sprites, terminal, timers, types, utilities, windows"
+// Please select an option: "animations, audio, camera, color, generative_ai, geometry, graphics, input, json, networking, physics, resource_bundles, resources, sprites, terminal, timers, types, utilities, windows"
 for (const categoryKey in jsonData) {
   const category = jsonData[categoryKey];
-  let input = categoryKey;
+  let input = categoryKey.replace(/_/g, "-");
   const categoryFunctions = category.functions;
   let mdxContent = "";
-  name = input.split("_")
+  name = input.split("-")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" "); //name of the category
+  if (name == "Generative Ai") {
+    name = "Generative AI";
+  }
   const functionNames = category.functions.map((func) => func.name);
 
   mdxContent += "---\n";
@@ -543,17 +551,41 @@ for (const categoryKey in jsonData) {
     const overloads = functionGroups[functionName];
     const isOverloaded = overloads.length > 1;
 
-    if (isOverloaded) {
-      // Create a section for overloaded functions
+    const hasExampleInGroup = functionGroups[functionName].some((func) =>
+      usageExamples.some((example) =>
+        example.startsWith(func.unique_global_name + "-1-example.txt")
+      )
+    );
 
+    const hasExampleReferenceInGroup = functionGroups[functionName].some((func) =>
+      examplesCategories.some((category) =>
+        category.some((example) =>
+          example.functions.includes(func.unique_global_name)
+        )
+      )
+    );
+
+    const hasGuideInGroup = functionGroups[functionName].some((func) =>
+      guidesCategories.some((category) =>
+        category.some((guide) =>
+          guide.functions.includes(func.unique_global_name)
+        )
+      )
+    );
+
+    // Create a section for overloaded functions
+    if (isOverloaded) {
       const formattedFunctionName = functionName
         .split("_")
         .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
         .join(" ");
       const formattedLink = formattedFunctionName.toLowerCase().replace(/\s+/g, "-");
 
-      const formattedGroupLink = `${formattedLink}`;
-      mdxContent += `\n### [${formattedFunctionName}](#${formattedGroupLink})\n\n`;
+      // Put {</>} symbol at the end of header if function has a usage example
+      const hasSymbol = (hasExampleInGroup || hasGuideInGroup || hasExampleReferenceInGroup) ? `&nbsp;&nbsp;&lcub;&lt;/&gt;&rcub;` : "";
+      const formattedGroupLink = `${formattedLink}-functions`;
+
+      mdxContent += `\n### [${formattedFunctionName}](#${formattedGroupLink})${hasSymbol} \\{#${formattedGroupLink}\\}\n\n`;
 
       mdxContent += ":::note\n\n";
       mdxContent += "This function is overloaded. The following versions exist:\n\n";
@@ -579,7 +611,19 @@ for (const categoryKey in jsonData) {
           }
           paramNumber++;
         }
-        mdxContent += `)](/api/${input}/#${formattedLink.toLowerCase()}-${index + 1})\n`;
+        const formattedUniqueLink = func.unique_global_name.toLowerCase().replace(/_/g, "-");
+        mdxContent += `)](/api/${input}/#${formattedUniqueLink})`;
+
+        // Put bolded {</>} symbol at the end of heading link if function has a usage example
+        const hasExample = usageExamples.some(example => example.startsWith(func.unique_global_name + "-1-example.txt"));
+        const hasGuide = guidesCategories.some((category) => category.some((guide) => guide.functions.includes(func.unique_global_name)));
+        const hasExampleReference = examplesCategories.some((category) => category.some((example) => example.functions.includes(func.unique_global_name)));
+
+        if (hasExample || hasGuide || hasExampleReference) {
+          mdxContent += "&nbsp;&nbsp;<strong>&lcub;&lt;/&gt;&rcub;</strong>";
+        }
+
+        mdxContent += `\n`;
       });
 
       mdxContent += "\n:::\n";
@@ -596,11 +640,15 @@ for (const categoryKey in jsonData) {
         .join(" ");
 
       const formattedLink = formattedName3.toLowerCase().replace(/\s+/g, "-");
-
+      const formattedUniqueLink = func.unique_global_name.toLowerCase().replace(/_/g, "-");
+      const hasExample = usageExamples.some(example => example.startsWith(func.unique_global_name + "-1-example.txt"));
+      const hasGuide = guidesCategories.some((category) => category.some((guide) => guide.functions.includes(func.unique_global_name)));
+      const hasExampleReference = examplesCategories.some((category) => category.some((example) => example.functions.includes(func.unique_global_name)));
+      const hasSymbol = (hasExample || hasGuide || hasExampleReference) ? `&nbsp;&nbsp;&lcub;&lt;/&gt;&rcub;` : "";
+      // Put {</>} symbol at the end of headers of overloaded functions with usage example or else just keep empty
       const formattedName = isOverloaded
-        ? `\n#### [${functionName2}](#${formattedLink.toLowerCase()}-${index + 1})`
-        : `\n### [${functionName2}](#${formattedLink})`;
-
+        ? `\n#### [${functionName2}](#${formattedUniqueLink})${hasSymbol} \\{#${formattedUniqueLink}\\}`
+        : `\n### [${functionName2}](#${formattedLink})${hasSymbol}`;
 
       // Replace type names in the description with formatted versions
       let description = func.description || "";
@@ -640,6 +688,7 @@ for (const categoryKey in jsonData) {
       // Add Parameters section only if there are parameters
       if (Object.keys(func.parameters).length > 0) {
         mdxContent += "**Parameters:**\n\n";
+        mdxContent += `<div class="function-parameters-list">\n\n`;
         mdxContent +=
           "| Name   | Type                                               | Description                                                                        |\n";
         mdxContent +=
@@ -647,7 +696,10 @@ for (const categoryKey in jsonData) {
 
         for (const paramName in func.parameters) {
           const param = func.parameters[paramName];
-          const paramType = typeMappings[param.type] || param.type;
+          let paramType = typeMappings[param.type] || param.type;
+          if (paramType == 'unsigned int') {
+            paramType = "`Unsigned Integer`";
+          }
           let description2 = param.description || "";
           for (const typeName in typeMappings) {
             const typeMapping = typeMappings[typeName];
@@ -673,12 +725,26 @@ for (const categoryKey in jsonData) {
         }
 
         mdxContent += "\n";
+        mdxContent += `</div>\n\n`;
       }
       if (func.return.type == 'unsigned int') {
         mdxContent += "**Return Type:** Unsigned Integer\n\n";
       }
       else if (func.return.type != 'void') {
         mdxContent += "**Return Type:** " + typeMappings[func.return.type] + "\n\n";
+
+        mdxContent += "*Returns:* ";
+        let returnDescription = func.return.description || "";
+        for (const typeName in typeMappings) {
+          const typeMapping = typeMappings[typeName];
+
+          returnDescription = returnDescription.replace(
+            new RegExp(`\`\\b${typeName}\\b\``, "g"),
+            typeMapping
+          );
+        }
+
+        mdxContent += `${returnDescription}\n\n`;
       }
 
       mdxContent += "**Signatures:**\n\n";
@@ -718,19 +784,48 @@ for (const categoryKey in jsonData) {
         })
       })
 
-      if (allGuides.length > 0) {
+      var limit = 0;
+      let allExamples = [];
+      examplesCategories.forEach((category) => {
+        category.forEach((example) => {
+          example.functions.forEach((used) => {
+            if (func.unique_global_name == used && limit < 4) {
+              allExamples.push({
+                name: example.funcKey,
+                title: example.title,
+                url: example.url
+              })
+              limit++
+            }
+          })
+        })
+      })
+
+      if ((allGuides.length > 0) || (allExamples.length > 0)) {
 
         if (!usageHeading) {
-          mdxContent += "**Usage:**\n\n"
+          mdxContent += "**Usage:&nbsp;&nbsp;&lcub;&lt;/&gt;&rcub;**\n\n";
           usageHeading = true;
         }
-        mdxContent += `<Accordion title="See Implementations in Guides" uniqueID={${JSON.stringify(func.unique_global_name + "_guides")}} customButton="guidesAccordion">\n\n`
+        mdxContent += `<Accordion title="See Implementations" uniqueID={${JSON.stringify(func.unique_global_name + "_guides")}} customButton="guidesAccordion">\n\n`
 
-        mdxContent += `<ul>`
-        allGuides.forEach((guide) => {
-          mdxContent += `<li> [${guide.name}](${guide.url}) </li>`
-        })
-        mdxContent += `</ul>\n\n`
+        if (allGuides.length > 0) {
+          mdxContent += `**Tutorials and Guides**:\n\n`
+          allGuides.forEach((guide) => {
+            mdxContent += `- [${guide.name}](${guide.url})\n`
+          })
+          if (allExamples.length > 0)
+            mdxContent += "\n"
+        }
+        if (allExamples.length > 0) {
+          mdxContent += `**API Documentation Code Examples**:\n\n`
+          allExamples.forEach((example) => {
+            const exampleName = getGroupName(jsonData, example.name);
+            mdxContent += `- [${exampleName}](${example.url}): ${example.title}\n`
+          })
+        }
+
+        mdxContent += `\n`
 
         mdxContent += `</Accordion>\n\n`
       }
@@ -739,7 +834,7 @@ for (const categoryKey in jsonData) {
       usageExamples.forEach((example) => {
         if (func.unique_global_name == example.split('-')[0]) {
           if (!usageHeading) {
-            mdxContent += `**Usage:**\n\n`
+            mdxContent += "**Usage:&nbsp;&nbsp;&lcub;&lt;/&gt;&rcub;**\n\n";
             usageHeading = true;
           }
           mdxContent += getUsageExampleImports(categoryKey, example.replace(".txt", ""));
@@ -839,6 +934,22 @@ for (const categoryKey in jsonData) {
           mdxContent += "\n";
         }
 
+        for (const typeName in typeMappings) {
+          const typeMapping = typeMappings[typeName];
+          description = description.replace(new RegExp(`\`\\b${typeName}\\b\``, "g"), typeMapping);
+        }
+        for (const names of functionNames) {
+          const normalName = names
+            .split("_")
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(" ");
+          const formattedLink = normalName.toLowerCase().replace(/\s+/g, "-");
+          const link = `[\`${normalName}\`](/api/${input}/#${formattedLink})`
+          description = description.replace(new RegExp(`\`\\b${names}\\b\``, "g"), link);
+        }
+        description = description.replaceAll("\n\n\n", "\n\n");
+        mdxContent += `${description}\n\n`;
+
         // If it's an enum, add a table for its constants
         if (type.constants) {
           mdxContent += "<Tabs syncKey=\"code-language\">\n";
@@ -883,22 +994,7 @@ for (const categoryKey in jsonData) {
           mdxContent += "</Tabs>\n";
         }
 
-        for (const typeName in typeMappings) {
-          const typeMapping = typeMappings[typeName];
-          description = description.replace(new RegExp(`\`\\b${typeName}\\b\``, "g"), typeMapping);
-        }
-        for (const names of functionNames) {
-          const normalName = names
-            .split("_")
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(" ");
-          const formattedLink = normalName.toLowerCase().replace(/\s+/g, "-");
-          const link = `[\`${normalName}\`](/api/${input}/#${formattedLink})`
-          description = description.replace(new RegExp(`\`\\b${names}\\b\``, "g"), link);
-        }
-        description = description.replaceAll("\n\n\n", "\n\n");
-        mdxContent += `${description}\n\n`;
-        mdxContent += `---\n`;
+        mdxContent += `\n---\n`;
       }
     });
   }
